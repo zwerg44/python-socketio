@@ -254,7 +254,7 @@ class AsyncServer(server.Server):
         namespace = namespace or '/'
         self.manager.connect(sid, namespace)
         if await self._trigger_event('connect', namespace, sid,
-                                     self.environ[sid]) is False:
+                                     self._get_environ(sid)) is False:
             self.manager.disconnect(sid, namespace)
             await self._send_packet(sid, packet.Packet(packet.ERROR,
                                                        namespace=namespace))
@@ -339,7 +339,7 @@ class AsyncServer(server.Server):
         if not self.manager_initialized:
             self.manager_initialized = True
             self.manager.initialize()
-        self.environ[sid] = environ
+        self._set_environ(sid, environ)
         return await self._handle_connect(sid, '/')
 
     async def _handle_eio_message(self, sid, data):
