@@ -2,7 +2,7 @@ import logging
 
 import engineio
 import six
-from engineio.stored_dict import stored_dict, is_picklable
+from engineio.redis_dict import EnvironMap, RedisDict
 
 
 from . import base_manager
@@ -78,9 +78,12 @@ class Server(object):
     :param engineio_logger: To enable Engine.IO logging set to ``True`` or pass
                             a logger object to use. To disable logging set to
                             ``False``. The default is ``False``.
-    :param state_storage: A connection URL to internal state storage,
+    :param state_storage: A connection URL to internal state storage (and socket_queue storage)
                           can be used to get rid of sticky sessions,
                           can cause performance drawback while using polling transport,
+                          also be careful if you are passing additional things through request environ,
+                          also may not work with multi-application configuration,
+                          also will not work with asyncio
                           ``redis://`` - supported only
                           NOTE: this parameter is Experimental
     """
@@ -94,7 +97,8 @@ class Server(object):
             packet.Packet.json = json
             engineio_options['json'] = json
         engineio_options['async_handlers'] = False
-        engineio_options['state_storage'] = state_storage
+        if state_storage:
+            engineio_options['state_storage'] = state_storage
         self.eio = self._engineio_server_class()(**engineio_options)
         self.eio.on('connect', self._handle_eio_connect)
         self.eio.on('message', self._handle_eio_message)
@@ -102,9 +106,8 @@ class Server(object):
         self.binary = binary
         if state_storage:
             self._remote_state = True
-            self.__last_environ = {}
-            self.environ = stored_dict(url=state_storage, key='environ')
-            self._binary_packet = stored_dict(url=state_storage, key='_binary_packet')
+            self.environ = EnvironMap(url=state_storage)
+            self._binary_packet = RedisDict(url=state_storage, key='_binary_packet')
         else:
             self._remote_state = False
             self.environ = {}
@@ -433,7 +436,7 @@ class Server(object):
         namespace = namespace or '/'
         self.manager.connect(sid, namespace)
         if self._trigger_event('connect', namespace, sid,
-                               self._get_environ(sid)) is False:
+                               self.environ[sid]) is False:
             self.manager.disconnect(sid, namespace)
             self._send_packet(sid, packet.Packet(packet.ERROR,
                                                  namespace=namespace))
@@ -509,42 +512,12 @@ class Server(object):
             return self.namespace_handlers[namespace].trigger_event(
                 event, *args)
 
-    def _get_environ(self, sid):
-        environ = self.environ[sid]
-        if self._remote_state:
-            for key, val in self.__last_environ.items():
-                environ[key] = val
-        return environ
-
-    def _set_environ(self, sid, environ):
-        if self._remote_state:
-            environ_copy = environ.copy()
-            last_environ = {}
-            for key, env in environ.items():
-                if not is_picklable(env):
-                    # FIXME: don't know what to do with this
-                    # not_serializable = [
-                    #    'wsgi.errors', 'wsgi.input', 'wsgi.file_wrapper',
-                    #    'x-wsgiorg.fdevent.readable', 'x-wsgiorg.fdevent.writable',
-                    # ]
-                    # for now, keeping that stuff from last recieved environ
-                    self.logger.warn('Not serializable environ: %s' % key)
-                    print('Not serializable environ: %s' % key)
-                    last_environ[key] = env
-                    del environ_copy[key]
-
-            self.__last_environ = last_environ
-            self.environ[sid] = environ_copy
-        else:
-            self.environ[sid] = environ
-
-
     def _handle_eio_connect(self, sid, environ):
         """Handle the Engine.IO connection event."""
         if not self.manager_initialized:
             self.manager_initialized = True
             self.manager.initialize()
-        self._set_environ(sid, environ)
+        self.environ[sid] = environ
         return self._handle_connect(sid, '/')
 
     def _handle_eio_message(self, sid, data):
