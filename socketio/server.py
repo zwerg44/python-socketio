@@ -4,11 +4,9 @@ import engineio
 import six
 from engineio.redis_dict import EnvironMap, RedisDict
 
-
 from . import base_manager
 from . import packet
 from . import namespace
-
 
 default_logger = logging.getLogger('socketio')
 
