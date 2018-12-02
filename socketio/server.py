@@ -518,8 +518,10 @@ class Server(object):
         self.environ[sid] = environ
         return self._handle_connect(sid, '/')
 
-    def _handle_eio_message(self, sid, data):
+    def _handle_eio_message(self, sid, data, environ=None):
         """Dispatch Engine.IO messages."""
+        if self._remote_state and environ:
+            self.environ[sid] = environ
         if sid in self._binary_packet:
             pkt = self._binary_packet[sid]
             if pkt.add_attachment(data):
